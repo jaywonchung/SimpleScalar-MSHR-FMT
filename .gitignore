@@ -1,3 +1,17 @@
 # Experiment files
 results/*
 spec_alpha/*
+
+# Build files
+*.o
+*.a
+sim-outorder
+sim-safe
+sim-fast
+sim-cache
+sim-bpred
+sim-cheetah
+sim-eio
+sim-mase
+sim-profile
+sysprobe
