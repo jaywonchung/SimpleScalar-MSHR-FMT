@@ -256,6 +256,12 @@ static char *cache_il2_opt;
 /* l2 instruction cache hit latency (in cycles) */
 static int cache_il2_lat;
 
+/* number of mshrs */
+static int MSHR_n;
+
+/* number of targets in an mshr */
+static int MSHR_n_targets;
+
 /* flush caches on system calls */
 static int flush_on_syscalls;
 
@@ -892,6 +898,16 @@ sim_reg_options(struct opt_odb_t *odb)
 	      &cache_il2_lat, /* default */6,
 	      /* print */TRUE, /* format */NULL);
 
+  opt_reg_int(odb, "-mshr:num",
+          "number of mshrs in D-cache",
+          &MSHR_n, /* default */4,
+          /* print */TRUE, /* format */NULL);
+
+  opt_reg_int(odb, "-mshr:ntarg",
+          "number of maximum targets in one mshr",
+          &MSHR_n_targets, /* default */2,
+          /* print */TRUE, /* format */NULL);
+
   opt_reg_flag(odb, "-cache:flush", "flush caches on system calls",
 	       &flush_on_syscalls, /* default */FALSE, /* print */TRUE, NULL);
 
@@ -1101,7 +1117,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 	fatal("bad l1 D-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
       cache_dl1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
-			       dl1_access_fn, /* hit lat */cache_dl1_lat);
+			       dl1_access_fn, /* hit lat */cache_dl1_lat,
+                   /* MSHR enabled */TRUE, MSHR_n, MSHR_n_targets);
 
       /* is the level 2 D-cache defined? */
       if (!mystricmp(cache_dl2_opt, "none"))
@@ -1114,7 +1131,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 		  "<name>:<nsets>:<bsize>:<assoc>:<repl>");
 	  cache_dl2 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 				   /* usize */0, assoc, cache_char2policy(c),
-				   dl2_access_fn, /* hit lat */cache_dl2_lat);
+				   dl2_access_fn, /* hit lat */cache_dl2_lat,
+                   /* MSHR enabled */TRUE, MSHR_n, MSHR_n_targets);
 	}
     }
 
@@ -1157,7 +1175,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 	fatal("bad l1 I-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
       cache_il1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
-			       il1_access_fn, /* hit lat */cache_il1_lat);
+			       il1_access_fn, /* hit lat */cache_il1_lat,
+                   /* MSHR enabled */FALSE, -1, -1);
 
       /* is the level 2 D-cache defined? */
       if (!mystricmp(cache_il2_opt, "none"))
@@ -1176,7 +1195,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 		  "<name>:<nsets>:<bsize>:<assoc>:<repl>");
 	  cache_il2 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 				   /* usize */0, assoc, cache_char2policy(c),
-				   il2_access_fn, /* hit lat */cache_il2_lat);
+				   il2_access_fn, /* hit lat */cache_il2_lat,
+                   /* MSHR enabled */FALSE, -1, -1);
 	}
     }
 
@@ -1191,7 +1211,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       itlb = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			  /* usize */sizeof(md_addr_t), assoc,
 			  cache_char2policy(c), itlb_access_fn,
-			  /* hit latency */1);
+			  /* hit latency */1,
+              /* MSHR enabled */FALSE, -1, -1);
     }
 
   /* use a D-TLB? */
@@ -1205,8 +1226,14 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       dtlb = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			  /* usize */sizeof(md_addr_t), assoc,
 			  cache_char2policy(c), dtlb_access_fn,
-			  /* hit latency */1);
+			  /* hit latency */1,
+              /* MSHR enabled */FALSE, -1, -1);
     }
+  if (MSHR_n < 1)
+    fatal("number of MSHR must be greater that zero");
+
+  if (MSHR_n_targets < 1)
+    fatal("number of max targets in on MSHR must be greater than zero");
 
   if (cache_dl1_lat < 1)
     fatal("l1 data cache latency must be greater than zero");
@@ -2278,6 +2305,11 @@ ruu_commit(void)
 		      lat =
 			cache_access(cache_dl1, Write, (LSQ[LSQ_head].addr&~3),
 				     NULL, 4, sim_cycle, NULL, NULL);
+              /* cannot complete store, stop committing */
+              if (lat == CACHE_BLOCKED) {
+                fu->master->busy = 0;
+                break;
+              }
 		      if (lat > cache_dl1_lat)
 			events |= PEV_CACHEMISS;
 		    }
@@ -2828,6 +2860,15 @@ ruu_issue(void)
 				    cache_access(cache_dl1, Read,
 						 (rs->addr & ~3), NULL, 4,
 						 sim_cycle, NULL, NULL);
+                  /* cannot complete load
+                   * cancel issue and move on to next in readyq */
+                  if (load_lat == CACHE_BLOCKED) {
+                    rs->issued = FALSE;
+                    fu->master->busy = 0;
+                    readyq_enqueue(rs);
+                    RSLINK_FREE(node);
+                    continue;
+                  }
 				  if (load_lat > cache_dl1_lat)
 				    events |= PEV_CACHEMISS;
 				}

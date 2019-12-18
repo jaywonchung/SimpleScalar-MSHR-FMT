@@ -148,6 +148,15 @@ struct cache_set_t
 				   access to cache blocks */
 };
 
+/* mshr_t definition */
+struct mshr_t
+{
+    int valid;        /* if the mshr contains a fetch in progress */
+    md_addr_t tagset; /* CACHE_TAGSET of block being fetched */
+    tick_t ready;     /* when the block will be ready */
+    int num_targets;  /* number of misses being handled */
+};
+
 /* cache definition */
 struct cache_t
 {
@@ -210,10 +219,18 @@ struct cache_t
   /* data blocks */
   byte_t *data;			/* pointer to data blocks allocation */
 
+  /* MSHR */
+  struct mshr_t *MSHR;
+  int MSHR_enabled;
+  int MSHR_allocated, MSHR_n, MSHR_n_targets;
+
   /* NOTE: this is a variable-size tail array, this must be the LAST field
      defined in this structure! */
   struct cache_set_t sets[1];	/* each entry is a set */
 };
+
+/* returned when out of MSHRs or MSHR targets */
+#define CACHE_BLOCKED -1
 
 /* create and initialize a general cache structure */
 struct cache_t *			/* pointer to cache created */
@@ -229,7 +246,10 @@ cache_create(char *name,		/* name of the cache */
 					   md_addr_t baddr, int bsize,
 					   struct cache_blk_t *blk,
 					   tick_t now),
-	     unsigned int hit_latency);/* latency in cycles for a hit */
+	     unsigned int hit_latency, /* latency in cycles for a hit */
+         unsigned int MSHR_enabled,    /* nonzero if MSHR is enabled */
+         unsigned int MSHR_n,          /* number of MSHRs */
+         unsigned int MSHR_n_targets); /* number of targets in one MSHR */
 
 /* parse policy */
 enum cache_policy			/* replacement policy enum */
