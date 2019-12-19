@@ -2849,8 +2849,8 @@ ruu_issue(void)
 			      if (tlb_lat > 1)
 				events |= PEV_TLBMISS;
 
-			      /* D-cache/D-TLB accesses occur in parallel */
-			      load_lat = MAX(tlb_lat, load_lat);
+			      /* D-cache/D-TLB accesses do not occur in parallel */
+                  load_lat += tlb_lat;
 			    }
 
 			  /* use computed cache access latency */
@@ -4346,8 +4346,8 @@ ruu_fetch(void)
 	      if (tlb_lat > 1)
 		last_inst_tmissed = TRUE;
 
-	      /* I-cache/I-TLB accesses occur in parallel */
-	      lat = MAX(tlb_lat, lat);
+	      /* I-cache/I-TLB accesses do not occur in parallel */
+          lat += tlb_lat;
 	    }
 
 	  /* I-cache/I-TLB miss? assumes I-cache hit >= I-TLB hit */
@@ -4576,8 +4576,8 @@ sim_main(void)
 	  /* decode the instruction */
 	  MD_SET_OPCODE(op, inst);
 
-	  /* execute the instruction */
-	  fprintf(stderr, "inst: %d\n", op);
+	  /* execute the instruction BUT SHUT UP */
+	  //fprintf(stderr, "inst: %d\n", op);
 	  switch (op)
 	    {
 #define DEFINST(OP,MSK,NAME,OPFORM,RES,FLAGS,O1,O2,I1,I2,I3)		\
