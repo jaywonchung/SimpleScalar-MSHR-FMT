@@ -7,7 +7,7 @@ def arithmetic_mean(l):
     return sum(l) / len(l)
 
 RESULTS_DIR = 'results'
-EXP_DIR = 'dl1'
+EXP_DIR = sys.argv[1]
 STAT_KEY_LIST = ['sim_IPC', 'dl1.accesses', 'dl1.hits', 'dl1.misses']
 AGGREGATE_FN_LIST = [harmonic_mean, sum, sum, sum]
 
@@ -36,7 +36,7 @@ for workload_name in WORKLOAD_LIST:
                         break
 
 with open(os.path.join(BASE_DIR, 'results.json'), 'w') as f:
-    json.dump(results, f, indent=4) 
+    json.dump(results, f, indent=4, sort_keys=True) 
 
 aggregate_across_stats = dict()
 for result_name, result_dict in results.items():
@@ -50,7 +50,7 @@ for result_name, result_dict in results.items():
 
 with open(os.path.join(BASE_DIR, 'results.json'), 'a') as f:
     f.write('\n\n\nAGGREGATE ACROSS STATS\n')
-    json.dump(aggregate_across_stats, f, indent=4)
+    json.dump(aggregate_across_stats, f, indent=4, sort_keys=True)
 
 aggregate_across_workloads = dict()
 for result_name, result_dict in aggregate_across_stats.items():
@@ -61,8 +61,9 @@ for result_name, result_dict in aggregate_across_stats.items():
             stat_list.append(workload_dict[stat_key])
         aggregate_dict[stat_key] = \
                 AGGREGATE_FN_LIST[STAT_KEY_LIST.index(stat_key)](stat_list)
+    aggregate_dict['hit_ratio'] = aggregate_dict['dl1.hits']/aggregate_dict['dl1.accesses']
     aggregate_across_workloads[result_name] = aggregate_dict
 
 with open(os.path.join(BASE_DIR, 'results.json'), 'a') as f:
     f.write('\n\n\nAGGREGATE ACROSS WORKLOADS\n')
-    json.dump(aggregate_across_workloads, f, indent=4)
+    json.dump(aggregate_across_workloads, f, indent=4, sort_keys=True)
