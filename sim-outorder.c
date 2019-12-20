@@ -415,14 +415,14 @@ static counter_t FMT_dl2_penalty = 0;
 static counter_t FMT_branch_penalty = 0;
 static counter_t FMT_long_FU_penalty = 0;
 
-static counter_t sFMT_itlb_penalty = 0;
-static counter_t sFMT_il1_penalty = 0;
-static counter_t sFMT_il2_penalty = 0;
-static counter_t sFMT_dtlb_penalty = 0;
-static counter_t sFMT_dl1_penalty = 0;
-static counter_t sFMT_dl2_penalty = 0;
-static counter_t sFMT_branch_penalty = 0;
-static counter_t sFMT_long_FU_penalty = 0;
+static counter_t SFMT_itlb_penalty = 0;
+static counter_t SFMT_il1_penalty = 0;
+static counter_t SFMT_il2_penalty = 0;
+static counter_t SFMT_dtlb_penalty = 0;
+static counter_t SFMT_dl1_penalty = 0;
+static counter_t SFMT_dl2_penalty = 0;
+static counter_t SFMT_branch_penalty = 0;
+static counter_t SFMT_long_FU_penalty = 0;
 
 /* occupancy counters */
 static counter_t IFQ_count;		/* cumulative IFQ occupancy */
@@ -440,8 +440,9 @@ static counter_t recovery_count = 0;
 /* total non-speculative bogus addresses seen (debug var) */
 static counter_t sim_invalid_addrs;
 
-/* FMT */
+/* FMT and sFMT */
 #define FMT_SZ 24
+#define SFMT_SZ 24
 
 struct fmt_ent_t {
   int mispred;
@@ -451,18 +452,35 @@ struct fmt_ent_t {
   counter_t local_itlb_penalty;
 };
 
+struct sfmt_ent_t {
+  int mispred;
+  counter_t local_branch_penalty;
+};
+
+counter_t SFMT_shared_il1_penalty = 0;
+counter_t SFMT_shared_il2_penalty = 0;
+counter_t SFMT_shared_itlb_penalty = 0;
+
+/* create FMT and sFMT */
 struct fmt_ent_t FMT[FMT_SZ];
-int FMT_num = 0;
 int FMT_fetch = FMT_SZ-1, FMT_dispatch_tail = FMT_SZ-1, FMT_dispatch_head = 0;
 
-/* cache miss event flag and masks for FMT */
+struct sfmt_ent_t SFMT[SFMT_SZ];
+int SFMT_fetch = SFMT_SZ-1, SFMT_dispatch_tail = SFMT_SZ-1, SFMT_dispatch_head = 0;
+
+/* cache miss event flag and masks for FMT and sFMT */
 #define TLB_MISS      0x00000001
 #define L1_CACHE_MISS 0x00000002
 #define L2_CACHE_MISS 0x00000004
-int fetch_miss_event = 0;
 
-/* whether a mispredicted branch has committed */
-static int FMT_mispred_commit = FALSE;
+/* simulator states, can be shared by FMT and sFMT */
+int fetch_miss_event = 0; 
+md_addr_t prev_miss_PC = 0;
+int prev_fetch_miss_event = 0;
+int SFMT_cleared_this_cycle = FALSE;
+
+/* whether a mispredicted branch has committed, shared simulator state */
+static int mispred_commit = FALSE;
 
 
 /*
@@ -1407,37 +1425,37 @@ sim_reg_stats(struct stat_sdb_t *sdb)   /* stats database */
            "FMT: long latency FU stall penalty cycles",
            &FMT_long_FU_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_itlb",
-           "sFMT: itlb miss penalty cycles",
-           &sFMT_itlb_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_itlb",
+           "SFMT: itlb miss penalty cycles",
+           &SFMT_itlb_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_il1",
-           "sFMT: il1 miss penalty cycles",
-           &sFMT_il1_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_il1",
+           "SFMT: il1 miss penalty cycles",
+           &SFMT_il1_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_il2",
-           "sFMT: il2 miss penalty cycles",
-           &sFMT_il2_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_il2",
+           "SFMT: il2 miss penalty cycles",
+           &SFMT_il2_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_dtlb",
-           "sFMT: dtlb miss penalty cycles",
-           &sFMT_dtlb_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_dtlb",
+           "SFMT: dtlb miss penalty cycles",
+           &SFMT_dtlb_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_dl1",
-           "sFMT: dl1 miss penalty cycles",
-           &sFMT_dl1_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_dl1",
+           "SFMT: dl1 miss penalty cycles",
+           &SFMT_dl1_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_dl2",
-           "sFMT: dl2 miss penalty cycles",
-           &sFMT_dl2_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_dl2",
+           "SFMT: dl2 miss penalty cycles",
+           &SFMT_dl2_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_branch",
-           "sFMT: branch misprediction penalty cycles",
-           &sFMT_branch_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_branch",
+           "SFMT: branch misprediction penalty cycles",
+           &SFMT_branch_penalty, /* initial value */0, /* format */NULL);
 
-  stat_reg_counter(sdb, "sFMT_long_FU",
-           "sFMT: long latency FU stall penalty cycles",
-           &sFMT_long_FU_penalty, /* initial value */0, /* format */NULL);
+  stat_reg_counter(sdb, "SFMT_long_FU",
+           "SFMT: long latency FU stall penalty cycles",
+           &SFMT_long_FU_penalty, /* initial value */0, /* format */NULL);
 
   /* occupancy stats */
   stat_reg_counter(sdb, "IFQ_count", "cumulative IFQ occupancy",
@@ -1725,7 +1743,11 @@ struct RUU_station {
   
   /* FMT */
   int fmt_index;  /* what FMT table index this branch is allocated to */
-  int miss_event; /* TLB_MISS or L1_CACHE_MISS or L2_CACHE_MISS */
+  int backend_miss_event; /* TLB_MISS or L1_CACHE_MISS or L2_CACHE_MISS */
+
+  /* sFMT */
+  int sfmt_index; /* what sFMT table index this branch is allocated to */
+  int fetch_miss_event;   /* TLB_MISS or L1_CACHE_MISS or L2_CACHE_MISS */
 };
 
 /* non-zero if all register operands are ready, update with MAX_IDEPS */
@@ -2352,6 +2374,25 @@ ruu_commit(void)
       /* default commit events */
       events = 0;
 
+      /* sFMT: check fetch_miss_event */
+      if (rs->fetch_miss_event) {
+        SFMT_itlb_penalty += SFMT_shared_itlb_penalty;
+        SFMT_il1_penalty += SFMT_shared_il1_penalty;
+        SFMT_il2_penalty += SFMT_shared_il2_penalty;
+
+        SFMT_shared_itlb_penalty = 0;
+        SFMT_shared_il1_penalty = 0;
+        SFMT_shared_il2_penalty = 0;
+
+        /* clear fetch_miss_event in all RUU */
+        int j, ind;
+        for (j=0, ind=RUU_head;
+             j<RUU_num;
+             j++, ind=(ind+1)%RUU_size) {
+          RUU[ind].fetch_miss_event = 0;
+        }
+      }
+
       /* load/stores must retire load/store queue entry as well */
       if (RUU[RUU_head].ea_comp)
 	{
@@ -2426,8 +2467,9 @@ ruu_commit(void)
 	  LSQ_num--;
 	}
 
-      /* branch, update FMT */
+      /* branch, update FMT/sFMT */
       if (MD_OP_FLAGS(rs->op) & F_CTRL) {
+        /* FMT */
         struct fmt_ent_t *fmt = &FMT[rs->fmt_index];
 
         /* mispredicted branch */
@@ -2435,7 +2477,7 @@ ruu_commit(void)
           FMT_branch_penalty += fmt->local_branch_penalty;
           /* ruu_dispatch: whenever an instruction is dispatched, set this FALSE.
              sim_main: if this flag is true, increment global branch penalty counter */
-          FMT_mispred_commit = TRUE;
+          mispred_commit = TRUE;
         }
         
         /* correctly predicted branch */
@@ -2446,6 +2488,28 @@ ruu_commit(void)
         }
 
         FMT_dispatch_head = (FMT_dispatch_head + 1) % FMT_SZ;
+
+        /* sFMT */
+        if (rs->sfmt_index != -1) { /* untracked branch due to sFMT clear */
+          struct sfmt_ent_t *sfmt = &SFMT[rs->sfmt_index];
+
+          /* mispredicted branch */
+          if (sfmt->mispred) {
+            SFMT_branch_penalty += sfmt->local_branch_penalty;
+            /* share mispred_commit with FMT */
+
+            /* reset sFMT */
+            SFMT_cleared_this_cycle = TRUE;
+            SFMT_shared_itlb_penalty = 0;
+            SFMT_shared_il1_penalty = 0;
+            SFMT_shared_il2_penalty = 0;
+            SFMT_fetch = SFMT_SZ-1;
+            SFMT_dispatch_tail = SFMT_SZ-1;
+            SFMT_dispatch_head = 0;
+          }
+
+          SFMT_dispatch_head = (SFMT_dispatch_head + 1) % SFMT_SZ;
+        }
       }
 
       if (pred
@@ -2632,6 +2696,16 @@ ruu_writeback(void)
 
 	  /* stall fetch until I-fetch and I-decode recover */
 	  ruu_fetch_issue_delay += ruu_branch_penalty;
+     
+      /* FMT recovery for branches without immediate fetch redirection*/
+      FMT_dispatch_tail = rs->fmt_index;
+      FMT_fetch = FMT_dispatch_tail;
+
+      /* sFMT recovery */
+      if (!SFMT_cleared_this_cycle && rs->sfmt_index != -1) {
+        SFMT_dispatch_tail = rs->sfmt_index;
+        SFMT_fetch = SFMT_dispatch_tail;
+      }
 
 	  /* continue writeback of the branch/control instruction */
 	}
@@ -2839,7 +2913,7 @@ lsq_refresh(void)
 static void
 ruu_issue(void)
 {
-  int i, load_lat, tlb_lat, n_issued;
+  int i, lat, load_lat, tlb_lat, n_issued;
   struct RS_link *node, *next_node;
   struct res_template *fu;
 
@@ -2988,7 +3062,7 @@ ruu_issue(void)
 			  /* all loads and stores must to access D-TLB */
 			  if (dtlb && MD_VALID_ADDR(rs->addr))
 			    {
-                  /* buffer miss counters before access */
+                  /* buffer miss counter before access */
                   counter_t initial_dtlb_misses = dtlb->misses;
 
 			      /* access the D-DLB, NOTE: this code will
@@ -3003,27 +3077,27 @@ ruu_issue(void)
                   if (initial_dtlb_misses != dtlb->misses)
                 tlb_miss = TRUE;
 
+                  /* D-cache or D-TLB miss */
+                  if (l1_miss || l2_miss || tlb_miss) {
+                    /* ascribe cycle to miss with longer latency */
+                    /* cache miss */
+                    if (load_lat >= tlb_lat) {
+                      if (l2_miss) rs->backend_miss_event = L2_CACHE_MISS;
+                      else rs->backend_miss_event = L1_CACHE_MISS;
+                    }
+                    /* tlb miss */
+                    else {
+                      rs->backend_miss_event = TLB_MISS;
+                    }
+                  }
+                  /* D-cache and D-TLB hit */
+                  else {
+                    rs->backend_miss_event = 0;
+                  }
+
 			      /* D-cache/D-TLB accesses occur in parallel */
 			      load_lat = MAX(tlb_lat, load_lat);
 			    }
-
-              /* D-cache or D-TLB miss */
-              if (l1_miss || l2_miss || tlb_miss) {
-                /* ascribe cycle to miss with longer latency */
-                /* cache miss */
-                if (load_lat >= tlb_lat) {
-                  if (l2_miss) rs->miss_event = L2_CACHE_MISS;
-                  else rs->miss_event = L1_CACHE_MISS;
-                }
-                /* tlb miss */
-                else {
-                  rs->miss_event = TLB_MISS;
-                }
-              }
-              /* D-cache and D-TLB hit */
-              else {
-                rs->miss_event = 0;
-              }
 
 			  /* use computed cache access latency */
 			  eventq_queue_event(rs, sim_cycle + load_lat);
@@ -3211,6 +3285,8 @@ struct fetch_rec {
   int stack_recover_idx;		/* branch predictor RSB index */
   unsigned int ptrace_seq;		/* print trace sequence id */
   int fmt_index;            /* index in FMT */
+  int sfmt_index;           /* index in sFMT */
+  int fetch_miss_event;     /* fetch miss event for this instruction */
 };
 static struct fetch_rec *fetch_data;	/* IFETCH -> DISPATCH inst queue */
 static int fetch_num;			/* num entries in IF -> DIS queue */
@@ -3981,7 +4057,8 @@ ruu_dispatch(void)
   qword_t temp_qword = 0;		/* " ditto " */
 #endif /* HOST_HAS_QWORD */
   enum md_fault_type fault;
-  int fmt_index;
+  int fmt_index, sfmt_index;
+  int rs_fetch_miss_event;
 
   made_check = FALSE;
   n_dispatched = 0;
@@ -4011,6 +4088,8 @@ ruu_dispatch(void)
       stack_recover_idx = fetch_data[fetch_head].stack_recover_idx;
       pseq = fetch_data[fetch_head].ptrace_seq;
       fmt_index = fetch_data[fetch_head].fmt_index;
+      sfmt_index = fetch_data[fetch_head].sfmt_index;
+      rs_fetch_miss_event = fetch_data[fetch_head].fetch_miss_event;
 
       /* decode the inst */
       MD_SET_OPCODE(op, inst);
@@ -4201,6 +4280,10 @@ ruu_dispatch(void)
 	  rs->seq = ++inst_seq;
 	  rs->queued = rs->issued = rs->completed = FALSE;
 	  rs->ptrace_seq = pseq;
+      rs->fmt_index = -1;
+      rs->backend_miss_event = 0;
+      rs->sfmt_index = -1;
+      rs->fetch_miss_event = rs_fetch_miss_event;
 
 	  /* split ld/st's into two operations: eff addr comp + mem access */
 	  if (MD_OP_FLAGS(op) & F_MEM)
@@ -4228,6 +4311,10 @@ ruu_dispatch(void)
 	      lsq->seq = ++inst_seq;
 	      lsq->queued = lsq->issued = lsq->completed = FALSE;
 	      lsq->ptrace_seq = pseq + 1;
+          lsq->fmt_index = -1;
+          lsq->backend_miss_event = 0;
+          lsq->sfmt_index = -1;
+          lsq->fetch_miss_event = 0;
 
 	      /* pipetrace this uop */
 	      ptrace_newuop(lsq->ptrace_seq, "internal ld/st", lsq->PC, 0);
@@ -4295,16 +4382,33 @@ ruu_dispatch(void)
 	      RUU_tail = (RUU_tail + 1) % RUU_size;
 	      RUU_num++;
 
-          /* set FMT info if F_CTRL */
+          /* set FMT/sFMT info if F_CTRL */
           if (MD_OP_FLAGS(op) & F_CTRL) {
             FMT_dispatch_tail = (FMT_dispatch_tail + 1) % FMT_SZ;
+
             rs->fmt_index = FMT_dispatch_tail;
-            if (fmt_index != FMT_dispatch_tail)
-                panic("FMT out of sync");
+
             /* mispredicted */
             if (regs.regs_NPC != pred_PC) {
                 FMT[FMT_dispatch_tail].mispred = TRUE;
-                FMT_fetch = FMT_dispatch_tail;
+
+                /* mispredicted but immediately fetch redirected: recover FMT/sFMT now */
+                if (fetch_redirected)
+                    FMT_fetch = FMT_dispatch_tail;
+            }
+
+            if (!SFMT_cleared_this_cycle && sfmt_index != -1) { 
+              SFMT_dispatch_tail = (SFMT_dispatch_tail + 1) % SFMT_SZ;
+              rs->sfmt_index = SFMT_dispatch_tail;
+
+              /* mispredicted */
+              if (regs.regs_NPC != pred_PC) {
+                  SFMT[SFMT_dispatch_tail].mispred = TRUE;
+
+                  /* mispredicted but immediately fetch redirected: recover FMT/sFMT now */
+                  if (fetch_redirected)
+                      SFMT_fetch = SFMT_dispatch_tail;
+              }
             }
           }
 
@@ -4402,7 +4506,7 @@ ruu_dispatch(void)
 
       /* unset flag so that sim_main does not increment
          global branch penalty counter */
-      FMT_mispred_commit = FALSE;
+      mispred_commit = FALSE;
 
       /* check for DLite debugger entry condition */
       made_check = TRUE;
@@ -4556,35 +4660,39 @@ ruu_fetch(void)
           /* check TLB miss using buffered value */
           if (initial_itlb_misses != itlb->misses)
         tlb_miss = TRUE;
+          
+          /* I-cache or I-TLB  miss  */
+          if (l1_miss || l2_miss || tlb_miss)
+            {
+              /* ascribe cycle to miss with longer latency */
+              /* cache miss */
+              if (lat >= tlb_lat) {
+                if (l2_miss) fetch_miss_event = L2_CACHE_MISS;
+                else fetch_miss_event = L1_CACHE_MISS;
+              }
+              /* tlb miss */
+              else {
+                fetch_miss_event = TLB_MISS;
+              }
 
-	      /* I-cache/I-TLB accesses occur in parallel */
-	      lat = MAX(tlb_lat, lat);
+              /* remember that this PC has fetch-missed */
+              prev_miss_PC = fetch_regs_PC;
+              prev_fetch_miss_event = fetch_miss_event;
+
+    	      /* I-cache/I-TLB accesses occur in parallel */
+    	      lat = MAX(tlb_lat, lat);
+
+              /* I-cache miss, block fetch until it is resolved */
+              ruu_fetch_issue_delay += lat - 1;
+              break;
+            }
+          /* I-cache and I-TLB hit */
+          else
+            {
+              fetch_miss_event = 0;
+            }
 	    }
-
-      /* I-cache or I-TLB  miss  */
-	  if (l1_miss || l2_miss || tlb_miss)
-	    {
-          /* ascribe cycle to miss with longer latency */
-          /* cache miss */
-          if (lat >= tlb_lat) {
-            if (l2_miss) fetch_miss_event = L2_CACHE_MISS;
-            else fetch_miss_event = L1_CACHE_MISS;
-          }
-          /* tlb miss */
-          else {
-            fetch_miss_event = TLB_MISS;
-          }
-
-	      /* I-cache miss, block fetch until it is resolved */
-	      ruu_fetch_issue_delay += lat - 1;
-	      break;
-	    }
-      /* I-cache and I-TLB hit */
-      else
-        {
-          fetch_miss_event = 0;
-        }
-	}
+    	}
       else
 	{
 	  /* fetch PC is bogus, send a NOP down the pipeline */
@@ -4614,15 +4722,22 @@ ruu_fetch(void)
 			   /* updt */&(fetch_data[fetch_tail].dir_update),
 			   /* RSB index */&stack_recover_idx);
 
-        if (FMT_num == FMT_SZ)
-          panic("FMT size too small");
-
+        /* allocate new entry in FMT */
         FMT_fetch = (FMT_fetch + 1) % FMT_SZ;
         FMT[FMT_fetch].mispred = FALSE;
         FMT[FMT_fetch].local_branch_penalty = 0;
         FMT[FMT_fetch].local_il1_penalty = 0;
         FMT[FMT_fetch].local_il2_penalty = 0;
         FMT[FMT_fetch].local_itlb_penalty = 0;
+
+        /* allocate new entry in SFMT, except for when the SFMT was
+         * cleared in the commit stage*/
+        if (!SFMT_cleared_this_cycle) {
+          SFMT_fetch = (SFMT_fetch + 1) % SFMT_SZ;
+          SFMT[SFMT_fetch].mispred = FALSE;
+          SFMT[SFMT_fetch].local_branch_penalty = 0;
+        }
+
       } else {
 	    fetch_pred_PC = 0;
       }
@@ -4654,7 +4769,18 @@ ruu_fetch(void)
       fetch_data[fetch_tail].pred_PC = fetch_pred_PC;
       fetch_data[fetch_tail].stack_recover_idx = stack_recover_idx;
       fetch_data[fetch_tail].ptrace_seq = ptrace_seq++;
-      fetch_data[fetch_tail].fmt_index = FMT_fetch;
+      if (MD_OP_FLAGS(op) & F_CTRL)
+        fetch_data[fetch_tail].fmt_index = FMT_fetch;
+      else
+        fetch_data[fetch_tail].fmt_index = -1;
+      if (!SFMT_cleared_this_cycle && (MD_OP_FLAGS(op) & F_CTRL))
+        fetch_data[fetch_tail].sfmt_index = SFMT_fetch;
+      else
+        fetch_data[fetch_tail].sfmt_index = -1;
+      if (fetch_regs_PC == prev_miss_PC)
+        fetch_data[fetch_tail].fetch_miss_event = prev_fetch_miss_event;
+      else
+        fetch_data[fetch_tail].fetch_miss_event = 0;
 
       /* for pipe trace */
       ptrace_newinst(fetch_data[fetch_tail].ptrace_seq,
@@ -4934,32 +5060,43 @@ sim_main(void)
       if (initial_fetch_num == fetch_num) {
         /* fetch wasn't done due to miss event */
         if (fetch_miss_event == TLB_MISS) {
-          FMT_itlb_penalty++;
+          FMT[FMT_fetch].local_itlb_penalty++;
+          SFMT_shared_itlb_penalty++;
         }
         else if (fetch_miss_event == L1_CACHE_MISS) {
-          FMT_il1_penalty++;
+          FMT[FMT_fetch].local_il1_penalty++;
+          SFMT_shared_il1_penalty++;
         }
         else if (fetch_miss_event == L2_CACHE_MISS) {
-          FMT_il2_penalty++;
+          FMT[FMT_fetch].local_il2_penalty++;
+          SFMT_shared_il2_penalty++;
         }
-        /* else, this is a latency by branch misprediction.
+        /* else, this is due to branch misprediction.
            FMT handles this, so skip here. */
       }
 
       /* updates related to full RUU */
       if (RUU_num == RUU_size) {
-        struct RUU_station *rs = &RUU[RUU_head];
-        if (rs->miss_event == TLB_MISS) {
-          FMT_dtlb_penalty++;
+        /* memory instruction? */
+        if (RUU[RUU_head].ea_comp) {
+          struct RUU_station *rs = &LSQ[LSQ_head];
+          if (rs->backend_miss_event == TLB_MISS) {
+            FMT_dtlb_penalty++;
+            SFMT_dtlb_penalty++;
+          }
+          else if (rs->backend_miss_event == L1_CACHE_MISS) {
+            FMT_dl1_penalty++;
+            SFMT_dl1_penalty++;
+          }
+          else if (rs->backend_miss_event == L2_CACHE_MISS) {
+            FMT_dl2_penalty++;
+            SFMT_dl2_penalty++;
+          }
         }
-        else if (rs->miss_event == L1_CACHE_MISS) {
-          FMT_dl1_penalty++;
-        }
-        else if (rs->miss_event == L2_CACHE_MISS) {
-          FMT_dl2_penalty++;
-        }
+        /* not memory instruction, then it must be long lat FU */
         else {
           FMT_long_FU_penalty++;
+          SFMT_long_FU_penalty++;
         }
       }
       else {
@@ -4970,10 +5107,17 @@ sim_main(void)
             break;
           i = (i + 1) % FMT_SZ;
         }
+        i=SFMT_dispatch_head;
+        for (;;) {
+          SFMT[i].local_branch_penalty++;
+          if (i == SFMT_dispatch_tail)
+            break;
+          i = (i + 1) % SFMT_SZ;
+        }
       }
 
       /* global branch penalty counter update? */
-      if (FMT_mispred_commit) {
+      if (mispred_commit) {
         FMT_branch_penalty++;
       }
 
@@ -4984,6 +5128,9 @@ sim_main(void)
       RUU_fcount += ((RUU_num == RUU_size) ? 1 : 0);
       LSQ_count += LSQ_num;
       LSQ_fcount += ((LSQ_num == LSQ_size) ? 1 : 0);
+
+      /* this flag set prevents sFMT allocation */
+      SFMT_cleared_this_cycle = FALSE;
 
       /* go to next cycle */
       sim_cycle++;
