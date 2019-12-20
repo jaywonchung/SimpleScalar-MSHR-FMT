@@ -453,7 +453,7 @@ struct fmt_ent_t {
 
 struct fmt_ent_t FMT[FMT_SZ];
 int FMT_num = 0;
-int FMT_fetch = -1, FMT_dispatch_tail = -1, FMT_dispatch_head = 0;
+int FMT_fetch = FMT_SZ-1, FMT_dispatch_tail = FMT_SZ-1, FMT_dispatch_head = 0;
 
 /* cache miss event flag and masks for FMT */
 #define TLB_MISS      0x00000001
@@ -3210,6 +3210,7 @@ struct fetch_rec {
   struct bpred_update_t dir_update;	/* bpred direction update info */
   int stack_recover_idx;		/* branch predictor RSB index */
   unsigned int ptrace_seq;		/* print trace sequence id */
+  int fmt_index;            /* index in FMT */
 };
 static struct fetch_rec *fetch_data;	/* IFETCH -> DISPATCH inst queue */
 static int fetch_num;			/* num entries in IF -> DIS queue */
@@ -3980,6 +3981,7 @@ ruu_dispatch(void)
   qword_t temp_qword = 0;		/* " ditto " */
 #endif /* HOST_HAS_QWORD */
   enum md_fault_type fault;
+  int fmt_index;
 
   made_check = FALSE;
   n_dispatched = 0;
@@ -4008,6 +4010,7 @@ ruu_dispatch(void)
       dir_update_ptr = &(fetch_data[fetch_head].dir_update);
       stack_recover_idx = fetch_data[fetch_head].stack_recover_idx;
       pseq = fetch_data[fetch_head].ptrace_seq;
+      fmt_index = fetch_data[fetch_head].fmt_index;
 
       /* decode the inst */
       MD_SET_OPCODE(op, inst);
@@ -4296,9 +4299,12 @@ ruu_dispatch(void)
           if (MD_OP_FLAGS(op) & F_CTRL) {
             FMT_dispatch_tail = (FMT_dispatch_tail + 1) % FMT_SZ;
             rs->fmt_index = FMT_dispatch_tail;
+            if (fmt_index != FMT_dispatch_tail)
+                panic("FMT out of sync");
             /* mispredicted */
             if (regs.regs_NPC != pred_PC) {
                 FMT[FMT_dispatch_tail].mispred = TRUE;
+                FMT_fetch = FMT_dispatch_tail;
             }
           }
 
@@ -4648,6 +4654,7 @@ ruu_fetch(void)
       fetch_data[fetch_tail].pred_PC = fetch_pred_PC;
       fetch_data[fetch_tail].stack_recover_idx = stack_recover_idx;
       fetch_data[fetch_tail].ptrace_seq = ptrace_seq++;
+      fetch_data[fetch_tail].fmt_index = FMT_fetch;
 
       /* for pipe trace */
       ptrace_newinst(fetch_data[fetch_tail].ptrace_seq,
@@ -4935,7 +4942,8 @@ sim_main(void)
         else if (fetch_miss_event == L2_CACHE_MISS) {
           FMT_il2_penalty++;
         }
-        else panic("no fetch and no miss event");
+        /* else, this is a latency by branch misprediction.
+           FMT handles this, so skip here. */
       }
 
       /* updates related to full RUU */
